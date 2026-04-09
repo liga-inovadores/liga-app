@@ -316,8 +316,47 @@ textarea.form-control { resize: vertical; min-height: 72px; }
   </div>
 </div>
 
+
+<!-- LOGIN SCREEN -->
+<div id="loginScreen" style="
+  display:flex; align-items:center; justify-content:center;
+  min-height:100vh; background:var(--black); padding:20px;
+">
+  <div style="width:100%;max-width:380px">
+    <div style="text-align:center;margin-bottom:40px">
+      <div style="font-family:var(--font-display);font-size:28px;font-weight:700;color:var(--white);line-height:1.2">
+        Liga dos<br>Inovadores
+      </div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#555;margin-top:8px">
+        Gestão de Associados
+      </div>
+    </div>
+    <div style="background:#111;border-radius:16px;padding:32px;border:1px solid #222">
+      <div style="margin-bottom:24px">
+        <label style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#666;display:block;margin-bottom:6px;font-weight:600">E-mail</label>
+        <input id="loginEmail" type="email" class="form-control" 
+          style="background:#1a1a1a;border-color:#333;color:#fff"
+          placeholder="seu@email.com"
+          onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+      <div style="margin-bottom:28px">
+        <label style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#666;display:block;margin-bottom:6px;font-weight:600">Senha</label>
+        <input id="loginPassword" type="password" class="form-control"
+          style="background:#1a1a1a;border-color:#333;color:#fff"
+          placeholder="••••••••"
+          onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+      <button class="btn btn-primary" onclick="doLogin()" id="loginBtn"
+        style="width:100%;justify-content:center;padding:12px;font-size:14px">
+        Entrar
+      </button>
+      <div id="loginError" style="color:#ff6b6b;font-size:12px;text-align:center;margin-top:12px;display:none"></div>
+    </div>
+  </div>
+</div>
+
 <!-- APP -->
-<div class="app">
+<div class="app" id="appContainer" style="display:none">
 
   <!-- SIDEBAR -->
   <aside class="sidebar" id="sidebar">
@@ -335,7 +374,7 @@ textarea.form-control { resize: vertical; min-height: 72px; }
       <div class="nav-item" onclick="navigate('associados')" data-page="associados">
         <span class="icon">◉</span> Associados
       </div>
-      <div class="nav-item" onclick="navigate('financeiro')" data-page="financeiro">
+      <div class="nav-item" id="navFinanceiro" onclick="navigate('financeiro')" data-page="financeiro">
         <span class="icon">◇</span> Financeiro
       </div>
       <div class="nav-item" onclick="navigate('log')" data-page="log">
@@ -345,7 +384,11 @@ textarea.form-control { resize: vertical; min-height: 72px; }
         <span class="icon">◌</span> Prospects
       </div>
     </nav>
-    <div class="sidebar-footer">Liga dos Inovadores © 2026</div>
+    <div class="sidebar-footer">
+  <div id="userDisplay" style="color:#aaa;font-size:12px;margin-bottom:8px"></div>
+  <button class="btn btn-ghost btn-sm" onclick="doLogout()" style="color:#666;padding:0;font-size:11px">Sair →</button>
+  <div style="margin-top:8px;color:#333;font-size:10px">Liga dos Inovadores © 2026</div>
+</div>
   </aside>
 
   <!-- MAIN -->
@@ -815,7 +858,7 @@ async function loadFinanceiro() {
             <td>${f.valor_mensal ? 'R$ '+Number(f.valor_mensal).toFixed(2) : '—'}</td>
             <td class="${isOverdue(f.data_vencimento)?'timeline-prazo-vencido':''}">${fmtDate(f.data_vencimento)}</td>
             <td style="color:var(--gray-5);max-width:200px">${f.observacao||'—'}</td>
-            <td><button class="btn btn-ghost btn-sm" onclick="modalEditFinanceiro('${f.id}')">editar</button></td>
+            <td>${canEditFinanceiro() ? `<button class="btn btn-ghost btn-sm" onclick="modalEditFinanceiro('${f.id}')">editar</button>` : ''}</td>
           </tr>
         `).join('')}
       </tbody>
@@ -886,6 +929,9 @@ function openModal(title, body, footer) {
   document.getElementById('modalBody').innerHTML = body
   document.getElementById('modalFooter').innerHTML = footer
   document.getElementById('modalBackdrop').classList.add('open')
+  // auto-fill quem registrou
+  const qEl = document.getElementById('log_quem')
+  if (qEl && !qEl.value) qEl.value = getUserName()
 }
 function closeModal() { document.getElementById('modalBackdrop').classList.remove('open') }
 document.getElementById('modalBackdrop').addEventListener('click', e => { if(e.target===e.currentTarget) closeModal() })
@@ -1044,7 +1090,7 @@ async function modalNovoLog(pessoaId='', pessoaNome='') {
         <div class="form-group"><label>Data</label><input class="form-control" id="log_data" type="date" value="${today}"></div>
       </div>
       <div class="form-grid form-grid-2">
-        <div class="form-group"><label>Quem registrou</label><input class="form-control" id="log_quem" placeholder="Kátia, Marcelo..."></div>
+        <div class="form-group"><label>Quem registrou</label><input class="form-control" id="log_quem" placeholder="Kátia, Marcelo..."></div></div><!-- quem_auto --></div>
         <div class="form-group"><label>Padrão de Atendimento</label>
           <select class="form-control" id="log_padrao">
             <option value="">—</option>
@@ -1157,10 +1203,115 @@ async function salvarProspect(id=null) {
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('mobile-open') }
 function closeSidebar() { document.getElementById('sidebar').classList.remove('mobile-open') }
 
+
+// ══════════════════════════════════════════════
+// AUTH
+// ══════════════════════════════════════════════
+const USER_NAMES = {
+  'contato@pimenta.com.br':        'Kátia',
+  'marcelo@pimenta.com.br':        'Marcelo',
+  'gian.sschiavo@gmail.com':       'Gianmarco',
+  'liga@ligadosinovadores.com.br': 'Priscila',
+  'equipe@sorellamarketing.com.br':'Gabriely',
+}
+
+// Permissões — todos têm acesso completo
+// Badge admin: Priscila e Marcelo (apenas visual)
+function canEditFinanceiro() { return true }
+function isAdmin() {
+  return ['liga@ligadosinovadores.com.br','marcelo@pimenta.com.br'].includes(currentUser?.email)
+}
+
+
+let currentUser = null
+
+function getUserName() {
+  if (!currentUser) return ''
+  return USER_NAMES[currentUser.email] || currentUser.email.split('@')[0]
+}
+
+async function doLogin() {
+  const email = document.getElementById('loginEmail').value.trim()
+  const pass  = document.getElementById('loginPassword').value
+  const btn   = document.getElementById('loginBtn')
+  const err   = document.getElementById('loginError')
+
+  if (!email || !pass) { showLoginError('Preencha e-mail e senha'); return }
+
+  btn.textContent = 'Entrando...'
+  btn.disabled = true
+  err.style.display = 'none'
+
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: pass })
+
+  if (error) {
+    showLoginError('E-mail ou senha incorretos')
+    btn.textContent = 'Entrar'
+    btn.disabled = false
+    return
+  }
+
+  currentUser = data.user
+  showApp()
+}
+
+function showLoginError(msg) {
+  const err = document.getElementById('loginError')
+  err.textContent = msg
+  err.style.display = 'block'
+}
+
+function showApp() {
+  document.getElementById('loginScreen').style.display = 'none'
+  document.getElementById('appContainer').style.display = 'flex'
+  document.getElementById('userDisplay').innerHTML = 
+    '👤 ' + getUserName() + 
+    (isAdmin() ? ' <span style="background:#E91E8C;color:#fff;font-size:9px;padding:1px 6px;border-radius:4px;margin-left:4px">admin</span>' : '')
+  const navFin = document.getElementById('navFinanceiro')
+  if (navFin) navFin.style.display = 'flex'
+  navigate('painel')
+}
+
+async function doLogout() {
+  await sb.auth.signOut()
+  currentUser = null
+  document.getElementById('appContainer').style.display = 'none'
+  document.getElementById('loginScreen').style.display = 'flex'
+  document.getElementById('loginEmail').value = ''
+  document.getElementById('loginPassword').value = ''
+}
+
+// Auth state listener — single source of truth
+async function initAuth() {
+  // Always start with login screen visible, app hidden
+  document.getElementById('loginScreen').style.display = 'flex'
+  document.getElementById('appContainer').style.display = 'none'
+
+  // Listen to auth state changes
+  sb.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_IN' && session?.user) {
+      currentUser = session.user
+      showApp()
+    } else if (event === 'SIGNED_OUT' || !session) {
+      currentUser = null
+      document.getElementById('appContainer').style.display = 'none'
+      document.getElementById('loginScreen').style.display = 'flex'
+    }
+  })
+
+  // Check for existing valid session
+  const { data: { session } } = await sb.auth.getSession()
+  if (session?.user) {
+    currentUser = session.user
+    showApp()
+  }
+  // If no session, login screen stays visible (already set above)
+}
+
 // ══════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════
-navigate('painel')
+initAuth()
 </script>
 </body>
 </html>
