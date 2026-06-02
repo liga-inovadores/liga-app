@@ -211,6 +211,16 @@ textarea.form-control { resize: vertical; min-height: 72px; }
 .prio-media .prio-dot { background: var(--yellow); }
 .prio-baixa .prio-dot { background: var(--green); }
 .tarefa-resp { font-size: 11px; color: var(--gray-5); }
+.tarefa-resp-pill { display:inline-flex;align-items:center;gap:4px;background:var(--purp-lt);color:var(--purple);border-radius:99px;padding:2px 8px 2px 4px;font-size:11px;font-weight:600;white-space:nowrap; }
+.tarefa-resp-pill::before { content:attr(data-inicial);display:none; }
+.tarefa-resp-vazio { background:var(--gray-1);color:var(--gray-5); }
+.tarefa-resp-nome { font-size:11px; }
+.filter-bar { display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;background:var(--white);border-radius:10px;padding:12px 16px;box-shadow:var(--shadow); }
+.filter-bar label { font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--gray-5);font-weight:600; }
+.filter-sel { border:1.5px solid var(--gray-3);border-radius:8px;padding:5px 10px;font-size:12px;font-family:var(--font-body);color:var(--black);background:var(--white);cursor:pointer;outline:none; }
+.filter-sel:focus { border-color:var(--pink); }
+.filter-reset { font-size:11px;color:var(--pink);cursor:pointer;background:none;border:none;font-family:var(--font-body);font-weight:600;padding:0; }
+.filter-reset:hover { text-decoration:underline; }
 .nova-tarefa-inline { display: flex; align-items: center; gap: 10px; padding: 8px 18px; }
 .nova-tarefa-input { border: none; outline: none; font-family: var(--font-body); font-size: 13px; color: var(--black); background: transparent; flex: 1; padding: 4px 0; border-bottom: 1.5px solid transparent; transition: border-color .15s; }
 .nova-tarefa-input:focus { border-bottom-color: var(--pink); }
@@ -351,6 +361,23 @@ textarea.form-control { resize: vertical; min-height: 72px; }
       </div>
 
       <div class="page" id="page-tarefas">
+        <div class="filter-bar" id="tarefasFilterBar" style="display:none">
+          <label>Filtrar:</label>
+          <select class="filter-sel" id="filt_cat" onchange="aplicarFiltroTarefas()"><option value="">Todas as categorias</option></select>
+          <select class="filter-sel" id="filt_status" onchange="aplicarFiltroTarefas()">
+            <option value="">Todos os status</option>
+            <option>Não iniciado</option><option>Em andamento</option><option>Concluído</option>
+          </select>
+          <select class="filter-sel" id="filt_prio" onchange="aplicarFiltroTarefas()">
+            <option value="">Todas as prioridades</option>
+            <option>Alta</option><option>Média</option><option>Baixa</option>
+          </select>
+          <select class="filter-sel" id="filt_resp" onchange="aplicarFiltroTarefas()">
+            <option value="">Todos os responsáveis</option>
+            ${['Kátia','Marcelo','Priscila','Gianmarco','Gabriely'].map(r=>`<option>${r}</option>`).join('')}
+          </select>
+          <button class="filter-reset" onclick="resetFiltroTarefas()">Limpar filtros</button>
+        </div>
         <div id="tarefasContent"><div class="loading"><div class="loading-spinner"></div></div></div>
       </div>
 
@@ -379,6 +406,22 @@ textarea.form-control { resize: vertical; min-height: 72px; }
       </div>
 
       <div class="page" id="page-financeiro">
+        <div class="filter-bar">
+          <label>Filtrar:</label>
+          <select class="filter-sel" id="fin_filt_status" onchange="renderFinanceiro(this.value,document.getElementById('fin_filt_tipo').value,document.getElementById('fin_filt_pgto').value)">
+            <option value="">Todos os status</option>
+            <option>ATIVO</option><option>PENDENTE</option><option>CANCELADO</option><option>GRATUITO</option><option>Em análise/negociação</option>
+          </select>
+          <select class="filter-sel" id="fin_filt_tipo" onchange="renderFinanceiro(document.getElementById('fin_filt_status').value,this.value,document.getElementById('fin_filt_pgto').value)">
+            <option value="">Todos os tipos</option>
+            <option value="mensal">Mensal</option><option value="anual">Anual</option>
+          </select>
+          <select class="filter-sel" id="fin_filt_pgto" onchange="renderFinanceiro(document.getElementById('fin_filt_status').value,document.getElementById('fin_filt_tipo').value,this.value)">
+            <option value="">Todos os pagamentos</option>
+            <option value="confirmado">Confirmados</option><option value="pendente">Pendentes</option>
+          </select>
+          <button class="filter-reset" onclick="document.getElementById('fin_filt_status').value='';document.getElementById('fin_filt_tipo').value='';document.getElementById('fin_filt_pgto').value='';renderFinanceiro()">Limpar</button>
+        </div>
         <div class="card">
           <div class="section-title">Financeiro</div>
           <div class="table-wrap" id="financeiroTable"></div>
@@ -590,7 +633,7 @@ async function loadPainel() {
   document.getElementById('padroesGrid').innerHTML = padroesHtml||'<div style="color:var(--gray-5);font-size:13px">Nenhum padrão registrado ainda</div>'
 
   document.getElementById('alertGrid').innerHTML=`
-    <div class="alert-card ${semContato60.length>0?'warn':'info'}" style="cursor:pointer" onclick="navigate('acoes')">
+    <div class="alert-card ${semContato60.length>0?'warn':'info'}" style="cursor:pointer" onclick="navigate('acoes');setTimeout(()=>loadAcoes('semcontato'),100)">
       <div class="alert-icon">⏰</div>
       <div class="alert-body"><div class="alert-title">Sem contato +60 dias</div><div class="alert-count">${semContato60.length}</div><div class="alert-sub">ativos sem registro recente</div></div>
     </div>
@@ -668,15 +711,42 @@ async function loadTarefas() {
     sb.from('tarefas').select('*').order('ordem').order('created_at')
   ])
   _cats=cats||[]; _tarefas=tarefas||[]
+  // populate category filter
+  const filtCat=document.getElementById('filt_cat')
+  if(filtCat){ filtCat.innerHTML='<option value="">Todas as categorias</option>'+_cats.map(c=>`<option value="${c.id}">${c.nome}</option>`).join('') }
+  const filterBar=document.getElementById('tarefasFilterBar')
+  if(filterBar) filterBar.style.display=_cats.length?'flex':'none'
   renderTarefas()
 }
-function renderTarefas() {
+function aplicarFiltroTarefas(){
+  const catId=document.getElementById('filt_cat')?.value||''
+  const status=document.getElementById('filt_status')?.value||''
+  const prio=document.getElementById('filt_prio')?.value||''
+  const resp=document.getElementById('filt_resp')?.value||''
+  renderTarefas(catId,status,prio,resp)
+}
+function resetFiltroTarefas(){
+  document.getElementById('filt_cat').value=''
+  document.getElementById('filt_status').value=''
+  document.getElementById('filt_prio').value=''
+  document.getElementById('filt_resp').value=''
+  renderTarefas()
+}
+function renderTarefas(filtCatId='',filtStatus='',filtPrio='',filtResp='') {
   const el=document.getElementById('tarefasContent')
   if(!_cats.length){ el.innerHTML=`<div class="empty"><div class="empty-icon">☑</div><p>Crie categorias usando o botão ⚙ Categorias acima</p></div>`; return }
+  const catsToShow = filtCatId ? _cats.filter(c=>c.id===filtCatId) : _cats
   const bycat={}
   _cats.forEach(c=>bycat[c.id]=[])
-  _tarefas.filter(t=>t.nivel===1).forEach(t=>{ if(bycat[t.categoria_id]) bycat[t.categoria_id].push(t) })
-  el.innerHTML = _cats.map(cat=>{
+  _tarefas.filter(t=>{
+    if(t.nivel!==1) return false
+    if(filtCatId && t.categoria_id!==filtCatId) return false
+    if(filtStatus && t.status!==filtStatus) return false
+    if(filtPrio && t.prioridade!==filtPrio) return false
+    if(filtResp && t.responsavel!==filtResp) return false
+    return true
+  }).forEach(t=>{ if(bycat[t.categoria_id]) bycat[t.categoria_id].push(t) })
+  el.innerHTML = catsToShow.map(cat=>{
     const top=bycat[cat.id]||[]
     const pendentes=_tarefas.filter(t=>t.categoria_id===cat.id&&!t.concluido).length
     return `<div class="cat-group">
@@ -713,10 +783,10 @@ function renderTarefaRow(t, nivel) {
         <button class="tarefa-btn" title="Excluir" style="color:var(--red)" onclick="deletarTarefa('${t.id}')">✕</button>
       </div>
       <div class="tarefa-meta">
+        ${t.responsavel?`<span class="tarefa-resp-pill">${t.responsavel.charAt(0)}<span class="tarefa-resp-nome">${t.responsavel}</span></span>`:'<span class="tarefa-resp-pill tarefa-resp-vazio">—</span>'}
         <select class="tarefa-status-sel" onchange="atualizarStatus('${t.id}',this.value)">${statusOpts}</select>
-        <span class="tarefa-prazo ${overdue?'overdue':''}">${t.prazo?fmtDate(t.prazo):'—'}</span>
+        <span class="tarefa-prazo ${overdue?'overdue':''}">${t.prazo?fmtDate(t.prazo)+(overdue?' ⚠':''):'—'}</span>
         <span class="tarefa-prio prio-${(t.prioridade||'Média').toLowerCase()}"><span class="prio-dot"></span>${t.prioridade||'Média'}</span>
-        ${t.responsavel?`<span class="tarefa-resp">${t.responsavel}</span>`:''}
       </div>
     </div>
     ${subHtml}
@@ -803,7 +873,9 @@ async function salvarAnotacoes(){
 }
 
 // ── PRÓXIMAS AÇÕES ────────────────────────────
-async function loadAcoes() {
+let _acoesRows=[], _acoesFilterMode='atencao'
+async function loadAcoes(filterMode){
+  if(filterMode) _acoesFilterMode=filterMode
   document.getElementById('acoesTable').innerHTML=`<div class="loading"><div class="loading-spinner"></div></div>`
   const [{data:pessoas},{data:fins},{data:logs}] = await Promise.all([
     sb.from('pessoas').select('*').not('perfil','eq','TIME LIGA').order('nome'),
@@ -812,37 +884,50 @@ async function loadAcoes() {
   ])
   const finMap={}; (fins||[]).forEach(f=>finMap[f.nome]=f)
   const lastLogMap={}; (logs||[]).forEach(l=>{ if(!lastLogMap[l.nome]) lastLogMap[l.nome]=l })
-  const rows=(pessoas||[]).map(p=>{
-    const fin=finMap[p.nome]||{}
-    const log=lastLogMap[p.nome]||{}
+  const hoje=new Date()
+  const lastContact={}
+  ;(logs||[]).forEach(l=>{ if(l.data&&(!lastContact[l.nome]||l.data>lastContact[l.nome])) lastContact[l.nome]=l.data })
+  _acoesRows=(pessoas||[]).map(p=>{
+    const fin=finMap[p.nome]||{}; const log=lastLogMap[p.nome]||{}
     const overdue=isOverdue(log.prazo)
-    return {p,fin,log,overdue}
-  }).sort((a,b)=>{
+    const semContato60=lastContact[p.nome]?(hoje-new Date(lastContact[p.nome]))/86400000>60:false
+    const semFollowup=!log.proxima_acao
+    return {p,fin,log,overdue,semContato60,semFollowup}
+  })
+  renderAcoes()
+}
+function renderAcoes(){
+  const ORDEM={'ATIVO':0,'PENDENTE':1,'Em análise/negociação':2,'GRATUITO':3,'CANCELADO':4}
+  let rows=[..._acoesRows]
+  if(_acoesFilterMode==='semcontato') rows=rows.filter(r=>r.semContato60&&(r.fin?.status==='ATIVO'||!r.fin?.status))
+  else if(_acoesFilterMode==='atencao') rows=rows.filter(r=>r.overdue||r.semFollowup)
+  rows=rows.sort((a,b)=>{
+    const sa=ORDEM[a.fin?.status]??5,sb2=ORDEM[b.fin?.status]??5
+    if(sa!==sb2) return sa-sb2
     if(a.overdue&&!b.overdue) return -1
     if(!a.overdue&&b.overdue) return 1
     if(a.log.prazo&&b.log.prazo) return new Date(a.log.prazo)-new Date(b.log.prazo)
-    if(a.log.prazo) return -1
-    if(b.log.prazo) return 1
-    return 0
+    if(a.log.prazo) return -1; if(b.log.prazo) return 1; return 0
   })
-  if(!rows.length){ document.getElementById('acoesTable').innerHTML=`<div class="empty"><div class="empty-icon">◎</div><p>Nenhum registro encontrado</p></div>`; return }
-  document.getElementById('acoesTable').innerHTML=`<table>
+  const filterBar=`<div class="filter-bar" style="margin-bottom:16px">
+    <label>Exibir:</label>
+    <button class="btn btn-sm ${_acoesFilterMode==='atencao'?'btn-primary':'btn-secondary'}" onclick="_acoesFilterMode='atencao';renderAcoes()">Precisam de atenção</button>
+    <button class="btn btn-sm ${_acoesFilterMode==='semcontato'?'btn-primary':'btn-secondary'}" onclick="_acoesFilterMode='semcontato';renderAcoes()">Sem contato +60d</button>
+    <button class="btn btn-sm ${_acoesFilterMode==='todos'?'btn-primary':'btn-secondary'}" onclick="_acoesFilterMode='todos';renderAcoes()">Todos</button>
+  </div>`
+  if(!rows.length){ document.getElementById('acoesTable').innerHTML=filterBar+`<div class="empty"><div class="empty-icon">◎</div><p>Nenhum registro com esse filtro</p></div>`; return }
+  document.getElementById('acoesTable').innerHTML=filterBar+`<table>
     <thead><tr><th>Nome</th><th>Perfil</th><th>Status</th><th>Tipo</th><th>Padrão</th><th>Próxima Ação</th><th>Responsável</th><th>Prazo</th></tr></thead>
-    <tbody>
-      ${rows.map(({p,fin,log,overdue})=>`
-        <tr class="${overdue?'table-row-overdue':''}" style="cursor:pointer" onclick="navigate('ficha',{id:'${p.id}'})">
-          <td><strong>${p.nome}</strong></td>
-          <td>${perfilBadge(p.perfil)}</td>
-          <td>${statusBadge(fin.status||'—')}</td>
-          <td>${tipoBadge(fin.tipo_cobranca)}</td>
-          <td>${padraoBadge(log.padrao)}</td>
-          <td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${log.proxima_acao||'<span style="color:var(--gray-5)">—</span>'}</td>
-          <td style="color:var(--pink);font-size:12px;font-weight:500">${log.responsavel_acao||'<span style="color:var(--gray-5)">—</span>'}</td>
-          <td class="${overdue?'timeline-prazo-vencido':''}">${log.prazo?fmtDate(log.prazo)+(overdue?' ⚠':''):'—'}</td>
-        </tr>
-      `).join('')}
-    </tbody>
-  </table>`
+    <tbody>${rows.map(({p,fin,log,overdue})=>`
+      <tr class="${overdue?'table-row-overdue':''}" style="cursor:pointer" onclick="navigate('ficha',{id:'${p.id}'})">
+        <td><strong>${p.nome}</strong></td><td>${perfilBadge(p.perfil)}</td>
+        <td>${statusBadge(fin.status||'—')}</td><td>${tipoBadge(fin.tipo_cobranca)}</td>
+        <td>${padraoBadge(log.padrao)}</td>
+        <td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${log.proxima_acao||'<span style="color:var(--gray-5)">sem follow-up</span>'}</td>
+        <td style="color:var(--pink);font-size:12px;font-weight:500">${log.responsavel_acao||'<span style="color:var(--gray-5)">—</span>'}</td>
+        <td class="${overdue?'timeline-prazo-vencido':''}">${log.prazo?fmtDate(log.prazo)+(overdue?' ⚠':''):'—'}</td>
+      </tr>`).join('')}
+    </tbody></table>`
 }
 
 // ── ASSOCIADOS ────────────────────────────────
@@ -868,6 +953,13 @@ function filterAssociados(){
   ))
 }
 function renderAssociados(list){
+  const ORDEM={'ATIVO':0,'PENDENTE':1,'Em análise/negociação':2,'GRATUITO':3,'CANCELADO':4}
+  list=[...list].sort((a,b)=>{
+    const fa=_finMapA[a.nome]||{}, fb=_finMapA[b.nome]||{}
+    const sa=ORDEM[fa.status]??5, sb=ORDEM[fb.status]??5
+    if(sa!==sb) return sa-sb
+    return a.nome.localeCompare(b.nome)
+  })
   if(!list.length){ document.getElementById('associadosTable').innerHTML=`<div class="empty"><div class="empty-icon">◉</div><p>Nenhum associado encontrado</p></div>`; return }
   document.getElementById('associadosTable').innerHTML=`
     <table>
@@ -959,44 +1051,43 @@ async function loadFicha(id) {
 }
 
 // ── FINANCEIRO ────────────────────────────────
-async function loadFinanceiro() {
+let _financeiro=[]
+async function loadFinanceiro(){
   document.getElementById('financeiroTable').innerHTML=`<div class="loading"><div class="loading-spinner"></div></div>`
   const {data}=await sb.from('financeiro').select('*').order('nome')
-  if(!data?.length){ document.getElementById('financeiroTable').innerHTML=`<div class="empty">Nenhum registro</div>`; return }
+  _financeiro=data||[]; renderFinanceiro()
+}
+function isPagoRecente(f){
+  if(!f.data_ultimo_pagamento) return false
+  const dp=new Date(f.data_ultimo_pagamento),agora=new Date()
+  if(f.tipo_cobranca==='anual') return (agora-dp)/86400000<=366
+  return dp.getMonth()===agora.getMonth()&&dp.getFullYear()===agora.getFullYear()
+}
+function renderFinanceiro(filtStatus='',filtTipo='',filtPgto=''){
+  const ORDEM={'ATIVO':0,'PENDENTE':1,'Em análise/negociação':2,'GRATUITO':3,'CANCELADO':4}
+  let data=[..._financeiro].sort((a,b)=>(ORDEM[a.status]??5)-(ORDEM[b.status]??5))
+  if(filtStatus) data=data.filter(f=>f.status===filtStatus)
+  if(filtTipo)   data=data.filter(f=>(f.tipo_cobranca||'mensal')===filtTipo)
+  if(filtPgto==='confirmado') data=data.filter(f=>isPagoRecente(f))
+  if(filtPgto==='pendente')   data=data.filter(f=>!isPagoRecente(f)&&f.status!=='CANCELADO')
+  if(!data.length){ document.getElementById('financeiroTable').innerHTML=`<div class="empty">Nenhum registro com esses filtros</div>`; return }
   const hoje=new Date().toISOString().split('T')[0]
   document.getElementById('financeiroTable').innerHTML=`
     <table>
       <thead><tr><th>Nome</th><th>Status</th><th>Tipo</th><th>Valor</th><th>Vencimento</th><th>Último Pagamento</th><th>Baixa</th><th>Obs.</th><th></th></tr></thead>
-      <tbody>
-        ${data.map(f=>{
-          const vencOverdue=isOverdue(f.data_vencimento)&&f.status!=='CANCELADO'
-          const pagoRecente=f.data_ultimo_pagamento&&(()=>{
-            const dp=new Date(f.data_ultimo_pagamento)
-            const agora=new Date()
-            if(f.tipo_cobranca==='anual') return (agora-dp)/86400000<=366
-            return dp.getMonth()===agora.getMonth()&&dp.getFullYear()===agora.getFullYear()
-          })()
-          const pagoHtml=pagoRecente
-            ?`<span class="pago-badge-sim">✓ ${fmtDate(f.data_ultimo_pagamento)}</span>`
-            :f.data_ultimo_pagamento
-              ?`<span class="pago-badge-pend">⏳ ${fmtDate(f.data_ultimo_pagamento)}</span>`
-              :`<span class="pago-badge-nao">Não confirmado</span>`
-          return `<tr>
-            <td><strong>${f.nome}</strong></td>
-            <td>${statusBadge(f.status)}</td>
-            <td>${tipoBadge(f.tipo_cobranca)}</td>
-            <td>${f.valor_mensal?'R$ '+Number(f.valor_mensal).toFixed(2):'—'}</td>
-            <td class="${vencOverdue?'timeline-prazo-vencido':''}">${fmtDate(f.data_vencimento)}${vencOverdue?' ⚠':''}</td>
-            <td>${pagoHtml}</td>
-            <td onclick="event.stopPropagation()">
-              <button class="baixa-btn ${pagoRecente?'pago':''}" onclick="registrarBaixa('${f.id}','${f.nome}','${hoje}')">
-                ${pagoRecente?'✓ Em dia':'↓ Confirmar pagamento'}
-              </button>
-            </td>
-            <td style="color:var(--gray-5);max-width:160px;font-size:12px">${f.observacao||'—'}</td>
-            <td>${canEditFinanceiro()?`<button class="btn btn-ghost btn-sm" onclick="modalEditFinanceiro('${f.id}')">editar</button>`:''}</td>
-          </tr>`
-        }).join('')}
+      <tbody>${data.map(f=>{
+        const vencOverdue=isOverdue(f.data_vencimento)&&f.status!=='CANCELADO'
+        const pagoR=isPagoRecente(f)
+        const pagoHtml=pagoR?`<span class="pago-badge-sim">✓ ${fmtDate(f.data_ultimo_pagamento)}</span>`:f.data_ultimo_pagamento?`<span class="pago-badge-pend">⏳ ${fmtDate(f.data_ultimo_pagamento)}</span>`:`<span class="pago-badge-nao">Não confirmado</span>`
+        return `<tr>
+          <td><strong>${f.nome}</strong></td><td>${statusBadge(f.status)}</td><td>${tipoBadge(f.tipo_cobranca)}</td>
+          <td>${f.valor_mensal?'R$ '+Number(f.valor_mensal).toFixed(2):'—'}</td>
+          <td class="${vencOverdue?'timeline-prazo-vencido':''}">${fmtDate(f.data_vencimento)}${vencOverdue?' ⚠':''}</td>
+          <td>${pagoHtml}</td>
+          <td onclick="event.stopPropagation()"><button class="baixa-btn ${pagoR?'pago':''}" onclick="registrarBaixa('${f.id}','${f.nome}','${hoje}')">${pagoR?'✓ Em dia':'↓ Confirmar pagamento'}</button></td>
+          <td style="color:var(--gray-5);max-width:160px;font-size:12px">${f.observacao||'—'}</td>
+          <td>${canEditFinanceiro()?`<button class="btn btn-ghost btn-sm" onclick="modalEditFinanceiro('${f.id}')">editar</button>`:''}</td>
+        </tr>`}).join('')}
       </tbody>
     </table>`
 }
