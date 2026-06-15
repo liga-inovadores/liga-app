@@ -288,11 +288,13 @@ textarea.form-control { resize: vertical; min-height: 72px; }
 
 /* ── DASHBOARD SECTIONS / SEGMENTED TABS ───────────────── */
 .dashboard-section { margin-bottom: 22px; }
-.dashboard-section-header { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.dashboard-section-header { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.dashboard-section.atividade .dashboard-section-header { align-items:flex-start; }
 .dashboard-section-title { font-family:var(--font-display); font-size:20px; font-weight:700; }
 .dashboard-section-sub { font-size:12px; color:var(--gray-5); margin-top:3px; }
 .team-activity-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
 .team-card { background:var(--white); border-radius:var(--radius); box-shadow:var(--shadow); padding:16px 18px; border-left:3px solid var(--pink); }
+.team-card.feature { border-left-width:4px; background:linear-gradient(180deg,#fff 0%,#fff7fb 100%); }
 .team-card .name { font-size:12px; color:var(--gray-5); font-weight:600; text-transform:uppercase; letter-spacing:.7px; }
 .team-card .total { font-family:var(--font-display); font-size:30px; font-weight:700; line-height:1; margin-top:6px; }
 .team-card .detail { font-size:11px; color:var(--gray-5); margin-top:6px; }
@@ -774,9 +776,9 @@ function showDashboardDetails(section, key) {
   const store = window._dashboardDetails || {}
   const data = store[section]?.[key] || []
   const titles = {
-    atividade: key === 'todos' ? 'Atividade da equipe na semana' : `Atividade de ${key} na semana`,
+    atividade: key === 'todos' ? 'Atividade da equipe na semana' : (key === 'tarefasAbertas' ? 'Tarefas abertas' : `Atividade de ${key} na semana`),
     financeiro: { ativos:'Associados ativos', receita:'Base do faturamento estimado', pendentes:'Pendentes de pagamento', vencendo:'Pagamentos com vencimento em 30 dias' }[key] || 'Resumo financeiro',
-    relacionamento: { proximas:'Próximas ações', vencidas:'Ações vencidas', semContato:'Associados sem contato +60 dias', tarefas:'Tarefas abertas' }[key] || 'Resumo de relacionamento'
+    relacionamento: { proximas:'Próximas ações', vencidas:'Ações vencidas', semContato:'Associados sem contato +60 dias' }[key] || 'Resumo de relacionamento'
   }
   let cols
   if (section === 'atividade') cols = [
@@ -798,7 +800,7 @@ function showDashboardDetails(section, key) {
     {label:'Prazo', value:r=>fmtDate(r.prazo)},
     {label:'Responsável', value:r=>escHtml(r.responsavel || r.responsavel_acao || r.quem_registrou || '—')}
   ]
-  openDetailModal(titles[section] || 'Detalhes', data, cols)
+  openDetailModal(titles, data, cols)
 }
 function showFinanceiroDetalhe(key) {
   const store = window._financeiroDetails || {}
@@ -910,10 +912,16 @@ async function loadPainel() {
     if (isThisWeek(t.created_at, semanaInicio)) atividadeEventos.push({ data:t.created_at, quem:normalizeTeamName(t.criado_por || t.responsavel), tipo:'Tarefa criada', detalhe:t.titulo || '—' })
     if (isThisWeek(t.updated_at, semanaInicio) && !isSameDateTime(t.created_at, t.updated_at)) atividadeEventos.push({ data:t.updated_at, quem:normalizeTeamName(t.atualizado_por || t.responsavel), tipo:'Tarefa movimentada', detalhe:t.titulo || '—' })
   })
+  const tarefasAbertasEventos = tarefasAbertas.map(t => ({
+    data: t.updated_at || t.created_at || t.prazo,
+    quem: normalizeTeamName(t.responsavel || t.atualizado_por || t.criado_por),
+    tipo: 'Tarefa aberta',
+    detalhe: `${t.titulo || '—'}${t.prazo ? ' · prazo ' + fmtDate(t.prazo) : ''}`
+  }))
   window._dashboardDetails = {
-    atividade: { todos: atividadeEventos },
+    atividade: { todos: atividadeEventos, tarefasAbertas: tarefasAbertasEventos },
     financeiro: { ativos, receita: ativos, pendentes: pendentesPagamento, vencendo: vencendoPagamento },
-    relacionamento: { proximas: proximasAcoesPendentes, vencidas: acoesVencidasList, semContato: semContato60.map(f => ({...f, responsavel:'—'})), tarefas: tarefasAbertas }
+    relacionamento: { proximas: proximasAcoesPendentes, vencidas: acoesVencidasList, semContato: semContato60.map(f => ({...f, responsavel:'—'})) }
   }
   Object.keys(activity).forEach(nome => { window._dashboardDetails.atividade[nome] = atividadeEventos.filter(e => e.quem === nome) })
   const activityCards = Object.entries(activity)
@@ -933,15 +941,22 @@ async function loadPainel() {
       <div class="dashboard-section-header">
         <div>
           <div class="dashboard-section-title">Atividade da equipe</div>
-          <div class="dashboard-section-sub">o que foi registrado ou movimentado nesta semana</div>
-        </div>
-        <div class="kpi pink dashboard-click" style="min-width:170px;margin:0" onclick="showDashboardDetails('atividade','todos')">
-          <div class="kpi-label">Ações na semana</div>
-          <div class="kpi-value">${totalAtividadesSemana}</div>
-          <div class="kpi-sub">atendimentos + tarefas</div>
+          <div class="dashboard-section-sub">atendimentos, tarefas e movimentações internas da semana</div>
         </div>
       </div>
-      <div class="team-activity-grid">${activityCards || '<div class="empty"><p>Nenhuma atividade registrada nesta semana</p></div>'}</div>
+      <div class="team-activity-grid">
+        <div class="team-card feature dashboard-click" onclick="showDashboardDetails('atividade','todos')">
+          <div class="name">Ações na semana</div>
+          <div class="total">${totalAtividadesSemana}</div>
+          <div class="detail">atendimentos + tarefas movimentadas</div>
+        </div>
+        <div class="team-card feature dashboard-click" onclick="showDashboardDetails('atividade','tarefasAbertas')">
+          <div class="name">Tarefas abertas</div>
+          <div class="total">${tarefasAbertas.length}</div>
+          <div class="detail">${tarefasVencidas.length} vencidas</div>
+        </div>
+        ${activityCards || '<div class="empty"><p>Nenhuma atividade registrada nesta semana</p></div>'}
+      </div>
     </div>
 
     <div class="dashboard-section shell financeiro" style="grid-column:1/-1">
@@ -979,7 +994,7 @@ async function loadPainel() {
       <div class="dashboard-section-header">
         <div>
           <div class="dashboard-section-title">Resumo de relacionamento</div>
-          <div class="dashboard-section-sub">follow-ups, contatos e tarefas abertas</div>
+          <div class="dashboard-section-sub">follow-ups, contatos e relacionamento com associados</div>
         </div>
       </div>
       <div class="kpi-grid" style="margin-bottom:0">
@@ -997,11 +1012,6 @@ async function loadPainel() {
           <div class="kpi-label">Sem contato +60d</div>
           <div class="kpi-value">${semContato60.length}</div>
           <div class="kpi-sub">ativos sem registro recente</div>
-        </div>
-        <div class="kpi yellow dashboard-click" style="cursor:pointer" onclick="showDashboardDetails('relacionamento','tarefas')">
-          <div class="kpi-label">Tarefas Abertas</div>
-          <div class="kpi-value">${tarefasAbertas.length}</div>
-          <div class="kpi-sub">${tarefasVencidas.length} vencidas</div>
         </div>
       </div>
     </div>
@@ -2193,26 +2203,41 @@ async function deleteMuralNota(id) {
 async function loadPadroes() {
   const el = document.getElementById('padroesGrid')
   if (!el) return
-  const { data } = await sb.from('log_atendimento').select('padrao').not('padrao', 'is', null)
-  const contagem = {}
+  const { data } = await sb.from('log_atendimento').select('*').not('padrao', 'is', null).order('created_at', { ascending:false })
+  const grupos = {}
   ;(data||[]).forEach(l => {
     if (!l.padrao) return
     const code = l.padrao.split(' ')[0]
-    contagem[code] = (contagem[code]||0) + 1
+    if (!grupos[code]) grupos[code] = []
+    grupos[code].push(l)
   })
+  window._padroesDetails = grupos
+  const contagem = Object.fromEntries(Object.entries(grupos).map(([k,v]) => [k, v.length]))
   const total = Object.values(contagem).reduce((s,v)=>s+v, 0) || 1
   const CORES = { S1:'var(--green-lt)', S2:'var(--blue-lt)', S3:'var(--yell-lt)', S4:'var(--yell-lt)', S11:'#FFE5CC', S30:'var(--red-lt)', S31:'#F5C6CB' }
-  const TEXTO = { S1:'var(--green)', S2:'var(--blue)', S3:'var(--yellow)', S4:'var(--yellow)', S11:'#C05621', S30:'var(--red)', S31:'#9B2335' }
+  const TEXTO = { S1:'var(--green)', S2:'#2563EB', S3:'var(--yellow)', S4:'var(--yellow)', S11:'#C05621', S30:'var(--red)', S31:'#9B2335' }
   if (!Object.keys(contagem).length) {
     el.innerHTML = '<p style="color:var(--gray-5);font-size:12px">Nenhum padrão registrado ainda.</p>'
     return
   }
   el.innerHTML = Object.entries(contagem).sort((a,b)=>b[1]-a[1]).map(([code, n]) => `
-    <div style="background:${CORES[code]||'var(--gray-1)'};border-radius:8px;padding:10px 14px;min-width:100px">
+    <div class="dashboard-click" onclick="showPadraoDetails('${code}')" title="Clique para ver registros ${code}" style="background:${CORES[code]||'var(--gray-1)'};border-radius:8px;padding:10px 14px;min-width:100px;cursor:pointer;border:1px solid rgba(0,0,0,.04)">
       <div style="font-size:12px;font-weight:700;color:${TEXTO[code]||'var(--gray-7)'}">${code}</div>
       <div style="font-size:20px;font-weight:700;color:${TEXTO[code]||'var(--gray-7)'}">${n}</div>
       <div style="font-size:10px;color:var(--gray-5)">${Math.round(n/total*100)}% do total</div>
     </div>`).join('')
+}
+
+function showPadraoDetails(code) {
+  const data = window._padroesDetails?.[code] || []
+  openDetailModal(`Registros do padrão ${code}`, data, [
+    {label:'Data', value:r=>fmtDate(r.data || (r.created_at||'').split('T')[0])},
+    {label:'Associado', value:r=>`<span class="detail-table-name">${escHtml(r.nome)}</span>`},
+    {label:'Padrão', value:r=>escHtml(r.padrao)},
+    {label:'Próxima ação', value:r=>escHtml(r.proxima_acao || '—')},
+    {label:'Prazo', value:r=>fmtDate(r.prazo)},
+    {label:'Registrado por', value:r=>escHtml(r.quem_registrou || '—')}
+  ], `Nenhum registro encontrado para ${code}`)
 }
 
 // ══════════════════════════════════════════════
