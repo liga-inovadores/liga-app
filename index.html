@@ -488,11 +488,8 @@ textarea.form-control { resize: vertical; min-height: 72px; }
           <div id="muralWrap" style="display:flex;flex-wrap:wrap;gap:10px;padding:8px 0;min-height:60px"></div>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start">
-          <div class="card">
-            <div class="section-title">Pendentes <small>atenção necessária</small></div>
-            <div class="table-wrap" id="pendentesTable"></div>
-          </div>
+        <div id="pendentesTable" style="display:none"></div>
+        <div style="display:grid;grid-template-columns:1fr;gap:16px;align-items:start">
           <div class="card">
             <div class="section-title">Atividade Recente <small>últimos registros</small></div>
             <div id="activityFeed"></div>
@@ -722,6 +719,16 @@ const PADRAO_BADGE = {
   'S1': 'badge-green', 'S2': 'badge-blue', 'S3': 'badge-yellow',
   'S4': 'badge-yellow', 'S11': 'badge-pink', 'S30': 'badge-gray', 'S31': 'badge-gray',
 }
+const PADRAO_TITULOS = {
+  S1: 'Em dia, acompanhar',
+  S2: 'Em dia, definir foco',
+  S3: 'Regularizar pagamento',
+  S4: 'Marcelo vai conversar',
+  S11: 'Ex-professor, definir relação',
+  S30: 'Cancelado',
+  S31: 'Cancelado, volta em data'
+}
+function getPadraoTitulo(code) { return PADRAO_TITULOS[code] || '' }
 function badge(text, cls) {
   return `<span class="badge ${cls || 'badge-gray'}">${text || '—'}</span>`
 }
@@ -729,8 +736,9 @@ function perfilBadge(p) { return badge(p, PERFIL_BADGE[p] || 'badge-gray') }
 function statusBadge(s) { return badge(s, STATUS_BADGE[s] || 'badge-gray') }
 function padraoBadge(p) {
   if (!p) return '—'
-  const code = p.split(' ')[0]
-  return `<span class="badge ${PADRAO_BADGE[code] || 'badge-gray'}">${p}</span>`
+  const code = String(p).split(' ')[0]
+  const text = String(p).includes('—') ? p : `${code}${getPadraoTitulo(code) ? ' — ' + getPadraoTitulo(code) : ''}`
+  return `<span class="badge ${PADRAO_BADGE[code] || 'badge-gray'}">${text}</span>`
 }
 function fmtDate(d) {
   if (!d) return '—'
@@ -762,7 +770,7 @@ function normalizeTeamName(name) {
   const n = (name || '').trim()
   if (!n) return '—'
   const low = n.toLowerCase()
-  if (low.includes('priscila') || low.includes('liga@')) return 'Priscila'
+  if (low.includes('priscila') || low.includes('primpinheiro') || low.includes('prim pinheiro') || low.includes('liga@')) return 'Priscila'
   if (low.includes('marcelo')) return 'Marcelo'
   if (low.includes('katia') || low.includes('kátia') || low.includes('catia') || low.includes('cátia')) return 'Kátia'
   if (low.includes('jean')) return 'Gianmarco'
@@ -1555,10 +1563,12 @@ function renderGradePagamentosFilter(filter) {
 }
 
 function getMonths(n) {
+  // Grade fixa do ano atual: janeiro a dezembro.
+  // Não depende de app_config nem de botão para adicionar mês.
   const months = []
-  const d = new Date()
-  for (let i = n-1; i >= 0; i--) {
-    const dt = new Date(d.getFullYear(), d.getMonth() - i, 1)
+  const year = new Date().getFullYear()
+  for (let month = 0; month < 12; month++) {
+    const dt = new Date(year, month, 1)
     months.push(dt.toISOString().slice(0,7))
   }
   return months
@@ -1625,9 +1635,11 @@ function renderGradePagamentos(pessoas, fins, pgtos, filter) {
   }).join('')
 
   document.getElementById('finGrade').innerHTML = `
-    <div style="padding:12px 16px 8px;display:flex;align-items:center;justify-content:space-between">
-      <div style="font-size:13px;font-weight:600">Grade de Pagamentos</div>
-      <div style="font-size:11px;color:var(--gray-5)">Clique em ○ para marcar como pago · ✓ para desfazer</div>
+    <div style="padding:12px 16px 8px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:13px;font-weight:600">Grade de Pagamentos</div>
+        <div style="font-size:11px;color:var(--gray-5)">Janeiro a dezembro do ano atual · clique em ○ para marcar como pago · ✓ para desfazer</div>
+      </div>
     </div>
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead style="background:var(--gray-1)">
@@ -2074,6 +2086,8 @@ const USER_NAMES = {
   'marcelo@pimenta.com.br':        'Marcelo',
   'gian.sschiavo@gmail.com':       'Gianmarco',
   'liga@ligadosinovadores.com.br': 'Priscila',
+  'primpinheiro@gmail.com':          'Priscila',
+  'equipe@sorellamarketing.com.br':  'Priscila'
 }
 
 // Permissões — todos têm acesso completo
@@ -2310,16 +2324,17 @@ async function loadPadroes() {
     return
   }
   el.innerHTML = Object.entries(contagem).sort((a,b)=>b[1]-a[1]).map(([code, n]) => `
-    <div class="dashboard-click" onclick="showPadraoDetails('${code}')" title="Clique para ver registros ${code}" style="background:${CORES[code]||'var(--gray-1)'};border-radius:8px;padding:10px 14px;min-width:100px;cursor:pointer;border:1px solid rgba(0,0,0,.04)">
-      <div style="font-size:12px;font-weight:700;color:${TEXTO[code]||'var(--gray-7)'}">${code}</div>
-      <div style="font-size:20px;font-weight:700;color:${TEXTO[code]||'var(--gray-7)'}">${n}</div>
+    <div class="dashboard-click" onclick="showPadraoDetails('${code}')" title="Clique para ver registros ${code}" style="background:${CORES[code]||'var(--gray-1)'};border-radius:8px;padding:12px 14px;min-width:210px;cursor:pointer;border:1px solid rgba(0,0,0,.04)">
+      <div style="font-size:12px;font-weight:800;color:${TEXTO[code]||'var(--gray-7)'};letter-spacing:.5px">${code}</div>
+      <div style="font-size:12px;font-weight:600;color:var(--gray-7);margin-top:2px;min-height:30px">${getPadraoTitulo(code) || 'Sem título cadastrado'}</div>
+      <div style="font-size:22px;font-weight:800;color:${TEXTO[code]||'var(--gray-7)'};margin-top:4px">${n}</div>
       <div style="font-size:10px;color:var(--gray-5)">${Math.round(n/total*100)}% do total</div>
     </div>`).join('')
 }
 
 function showPadraoDetails(code) {
   const data = window._padroesDetails?.[code] || []
-  openDetailModal(`Registros do padrão ${code}`, data, [
+  openDetailModal(`Registros do padrão ${code}${getPadraoTitulo(code) ? ' — ' + getPadraoTitulo(code) : ''}`, data, [
     {label:'Data', value:r=>fmtDate(r.data || (r.created_at||'').split('T')[0])},
     {label:'Associado', value:r=>detailNameLink(r)},
     {label:'Padrão', value:r=>escHtml(r.padrao)},
@@ -2334,6 +2349,13 @@ function showPadraoDetails(code) {
 // ══════════════════════════════════════════════
 let _tarefas = []
 let _tarefaCats = []
+const _collapsedTarefas = new Set(JSON.parse(localStorage.getItem('liga_tarefas_recolhidas') || '[]'))
+function toggleSubtarefas(id) {
+  if (_collapsedTarefas.has(id)) _collapsedTarefas.delete(id)
+  else _collapsedTarefas.add(id)
+  localStorage.setItem('liga_tarefas_recolhidas', JSON.stringify([..._collapsedTarefas]))
+  renderTarefas()
+}
 
 async function loadTarefas() {
   const [{ data: cats }, { data: tasks }] = await Promise.all([
@@ -2425,12 +2447,15 @@ function taskStatusBadge(status) {
 
 function renderTarefaRow(task, nivel) {
   const children = _tarefas.filter(t => t.parent_id === task.id).sort((a,b)=>(a.ordem||0)-(b.ordem||0))
+  const hasChildren = children.length > 0
+  const collapsed = _collapsedTarefas.has(task.id)
   const pad = nivel * 24
   const isDone = !!task.concluido
   const obsPreview = task.observacoes ? `<div style="font-size:11px;color:var(--gray-5);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:520px">${escHtml(task.observacoes)}</div>` : ''
 
   return `
     <div class="tarefa-row" onclick="modalDetalheTarefa('${task.id}')" style="display:flex;align-items:center;gap:10px;padding:10px 16px 10px ${16+pad}px;border-bottom:1px solid var(--gray-1);min-height:44px;position:relative;cursor:pointer" onmouseenter="this.style.background='var(--gray-1)'" onmouseleave="this.style.background=''">
+      <button class="btn btn-ghost btn-sm" title="${hasChildren ? (collapsed ? 'Abrir subtarefas' : 'Fechar subtarefas') : 'Sem subtarefas'}" onclick="event.stopPropagation();${hasChildren ? `toggleSubtarefas('${task.id}')` : ''}" style="width:24px;height:24px;padding:0;justify-content:center;visibility:${hasChildren?'visible':'hidden'};font-size:13px;color:var(--gray-7);flex-shrink:0">${collapsed ? '▸' : '▾'}</button>
       <div onclick="event.stopPropagation();toggleTarefaConcluida('${task.id}',${isDone})" style="width:18px;height:18px;border-radius:5px;border:1.5px solid ${isDone?'var(--green)':'var(--gray-3)'};cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:${isDone?'var(--green)':'transparent'};color:white;font-size:11px">${isDone?'✓':''}</div>
       <div style="flex:1;min-width:180px">
         <div style="font-size:13px;font-weight:600;color:${isDone?'var(--gray-5)':'var(--black)'};${isDone?'text-decoration:line-through':''}">${escHtml(task.titulo || 'Sem título')}</div>
@@ -2453,7 +2478,7 @@ function renderTarefaRow(task, nivel) {
       </select>
       <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;color:var(--red);flex-shrink:0" onclick="event.stopPropagation();deleteTarefa('${task.id}')">✕</button>
     </div>
-    ${children.map(c => renderTarefaRow(c, nivel+1)).join('')}
+    ${(!collapsed ? children.map(c => renderTarefaRow(c, nivel+1)).join('') : '')}
   `
 }
 
@@ -2554,6 +2579,8 @@ async function addSubtarefa(parentId) {
   const titulo = prompt('Nome da subtarefa:')
   if (titulo?.trim()) {
     const parent = _tarefas.find(t => t.id === parentId)
+    _collapsedTarefas.delete(parentId)
+    localStorage.setItem('liga_tarefas_recolhidas', JSON.stringify([..._collapsedTarefas]))
     await addTarefa(titulo, parent?.categoria_id, parentId, null)
   }
 }
