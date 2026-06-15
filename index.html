@@ -300,6 +300,11 @@ textarea.form-control { resize: vertical; min-height: 72px; }
 .team-card .detail { font-size:11px; color:var(--gray-5); margin-top:6px; }
 .segmented-tabs { background:var(--white); border:1px solid #eee; border-radius:14px; padding:6px; display:inline-flex; gap:6px; box-shadow:var(--shadow); margin-bottom:16px; }
 .segmented-tabs .btn { border-radius:10px; padding:10px 18px; font-size:13px; }
+
+.fin-filter-bar { background:var(--white); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px 16px; margin:0 0 16px; display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; border:1px solid #eee; }
+.fin-filter-bar .form-group { min-width:220px; flex:1; }
+.fin-filter-bar .form-group.status { max-width:240px; flex:0 0 220px; }
+.fin-filter-bar .btn { margin-bottom:0; }
 .action-filter-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px; }
 .action-filter-card { background:var(--white); box-shadow:var(--shadow); border-radius:var(--radius); padding:15px 18px; cursor:pointer; border-top:3px solid var(--gray-3); transition:all .15s; }
 .action-filter-card:hover { transform:translateY(-2px); }
@@ -528,6 +533,19 @@ textarea.form-control { resize: vertical; min-height: 72px; }
           <button class="btn btn-primary" id="tabGeral" onclick="switchFinTab('geral')">Dados Gerais</button>
           <button class="btn btn-ghost" id="tabGrade" onclick="switchFinTab('grade')">Grade de Pagamentos</button>
         </div>
+        <div class="fin-filter-bar">
+          <div class="form-group">
+            <label>Pesquisar associado</label>
+            <input class="form-control" id="finSearchNome" type="text" placeholder="Digite o nome..." oninput="applyFinanceiroFilters()">
+          </div>
+          <div class="form-group status">
+            <label>Status</label>
+            <select class="form-control" id="finStatusFilter" onchange="applyFinanceiroFilters()">
+              <option value="">Todos os status</option>
+            </select>
+          </div>
+          <button class="btn btn-secondary" onclick="clearFinanceiroFilters()">Limpar filtros</button>
+        </div>
         <div id="finGeral" class="card">
           <div class="table-wrap" id="financeiroTable"></div>
         </div>
@@ -569,7 +587,7 @@ textarea.form-control { resize: vertical; min-height: 72px; }
           <select class="filter-select" id="filtRespTarefa" onchange="renderTarefas()">
             <option value="">Todos os responsáveis</option>
             <option>Kátia</option><option>Marcelo</option><option>Priscila</option>
-            <option>Gianmarco</option><option>Gabriely</option>
+            <option>Gianmarco</option>
           </select>
           <button class="btn btn-ghost btn-sm" onclick="modalGerenciarCategorias()">⚙ Categorias</button>
         </div>
@@ -749,8 +767,7 @@ function normalizeTeamName(name) {
   if (low.includes('katia') || low.includes('kátia') || low.includes('catia') || low.includes('cátia')) return 'Kátia'
   if (low.includes('jean')) return 'Gianmarco'
   if (low.includes('gian')) return 'Gianmarco'
-  if (low.includes('gabriely')) return 'Gabriely'
-  return n
+    return n
 }
 function toast(msg, type='success') {
   const t = document.createElement('div')
@@ -764,6 +781,8 @@ function toast(msg, type='success') {
 function escHtml(v) {
   return String(v ?? '—').replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[ch] || ch))
 }
+function escAttr(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
+
 function fmtMoney(v) {
   const n = Number(v || 0)
   return n ? 'R$ ' + n.toFixed(2).replace('.', ',') : '—'
@@ -894,7 +913,7 @@ async function loadPainel() {
   const tarefasSemana = (tarefas||[]).filter(t => isThisWeek(t.created_at, semanaInicio) || isThisWeek(t.updated_at, semanaInicio))
   const logsSemana = (logs||[]).filter(l => isThisWeek(l.created_at || l.data, semanaInicio))
 
-  const equipe = ['Priscila','Gianmarco','Marcelo','Kátia','Cátia','Gabriely']
+  const equipe = ['Priscila','Gianmarco','Marcelo','Kátia','Cátia']
   const activity = {}
   equipe.forEach(nome => activity[nome] = { logs:0, tarefasCriadas:0, tarefasAtualizadas:0 })
 
@@ -1356,6 +1375,7 @@ async function salvarPagamentoSeguro(payload) {
 
 let _finTab = 'geral'
 let _finFilter = null
+let _finAllData = { fins: [], pessoas: [], pgtos: [], filter: null }
 
 function switchFinTab(tab) {
   _finTab = tab
@@ -1385,6 +1405,8 @@ async function loadFinanceiro() {
   // ── KPI Cards financeiro ──
   const curMes = hoje.toISOString().slice(0,7) // YYYY-MM
   const pgtosCompat = buildPagamentosComFallback(pgtos || [], fins || [])
+  _finAllData = { fins: fins || [], pessoas: pessoas || [], pgtos: pgtosCompat || [], filter }
+  setupFinanceiroStatusOptions(fins || [])
   const pgtosMes = (pgtosCompat||[]).filter(p => p.mes === curMes)
   const pagosMes = pgtosMes.filter(p => p.status === 'pago')
   const receitaConf = pagosMes.reduce((s,p) => s+(p.valor||0), 0)
@@ -1428,43 +1450,92 @@ async function loadFinanceiro() {
     k.addEventListener('mouseleave', () => k.style.transform='')
   })
 
-  // ── Grade de pagamentos ──
-  renderGradePagamentos(pessoas||[], fins||[], pgtosCompat||[], filter)
-
-  // ── Dados gerais ──
-  if (!fins?.length) {
-    document.getElementById('financeiroTable').innerHTML = `<div class="empty">Nenhum registro</div>`
-  } else {
-    let finData = fins
-    if (filter === 'ATIVO') finData = fins.filter(f => f.status === 'ATIVO')
-    if (filter === 'PENDENTE') finData = fins.filter(f => f.status === 'PENDENTE')
-    if (filter === 'vencendo') finData = fins.filter(f => {
-      if (!f.data_vencimento) return false
-      const d = new Date(f.data_vencimento)
-      return d >= hoje && d <= em30
-    })
-    document.getElementById('financeiroTable').innerHTML = `
-      <table>
-        <thead><tr><th>Nome</th><th>Status</th><th>Valor Mensal</th><th>Vencimento</th><th>Último Pagamento</th><th>Observação</th><th></th></tr></thead>
-        <tbody>
-          ${finData.map(f => `
-            <tr style="cursor:pointer" onclick="navigate('ficha',{id:'${f.pessoa_id||''}'})">
-              <td><strong>${f.nome}</strong></td>
-              <td>${statusBadge(f.status)}</td>
-              <td>${f.valor_mensal ? 'R$ '+Number(f.valor_mensal).toFixed(2) : '—'}</td>
-              <td class="${isOverdue(f.data_vencimento)?'timeline-prazo-vencido':''}">${fmtDate(f.data_vencimento)}</td>
-              <td>${fmtDate(f.data_ultimo_pagamento)}</td>
-              <td style="color:var(--gray-5);max-width:200px">${f.observacao||'—'}</td>
-              <td onclick="event.stopPropagation()">${canEditFinanceiro() ? `<button class="btn btn-ghost btn-sm" onclick="modalEditFinanceiro('${f.id}')">editar</button>` : ''}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>`
-  }
+  // ── Dados gerais + Grade de pagamentos com filtros ──
+  applyFinanceiroFilters()
 
   // Dados gerais aparecem primeiro por padrão
   switchFinTab('geral')
   _pageFilters['financeiro'] = null
+}
+
+
+function setupFinanceiroStatusOptions(fins) {
+  const sel = document.getElementById('finStatusFilter')
+  if (!sel) return
+  const current = sel.value
+  const statuses = [...new Set((fins || []).map(f => f.status).filter(Boolean))].sort()
+  sel.innerHTML = '<option value="">Todos os status</option>' + statuses.map(st => `<option value="${st}">${st}</option>`).join('')
+  sel.value = statuses.includes(current) ? current : ''
+}
+
+function getFinanceiroFilteredData() {
+  const q = (document.getElementById('finSearchNome')?.value || '').trim().toLowerCase()
+  const st = document.getElementById('finStatusFilter')?.value || ''
+  const { fins, pessoas, pgtos, filter } = _finAllData
+  const hoje = new Date()
+  const em30 = new Date(); em30.setDate(hoje.getDate()+30)
+
+  let finData = [...(fins || [])]
+  if (filter === 'ATIVO') finData = finData.filter(f => f.status === 'ATIVO')
+  if (filter === 'PENDENTE') finData = finData.filter(f => f.status === 'PENDENTE')
+  if (filter === 'vencendo') finData = finData.filter(f => {
+    if (!f.data_vencimento) return false
+    const d = new Date(f.data_vencimento)
+    return d >= hoje && d <= em30
+  })
+  if (q) finData = finData.filter(f => (f.nome || '').toLowerCase().includes(q))
+  if (st) finData = finData.filter(f => f.status === st)
+
+  const allowedIds = new Set(finData.map(f => f.pessoa_id).filter(Boolean))
+  const allowedNames = new Set(finData.map(f => f.nome).filter(Boolean))
+  let pessoasData = (pessoas || []).filter(p => {
+    const nameOk = !q || (p.nome || '').toLowerCase().includes(q)
+    const linkedOk = allowedIds.has(p.id) || allowedNames.has(p.nome)
+    const fin = (fins || []).find(f => f.pessoa_id === p.id || f.nome === p.nome)
+    const statusOk = !st || fin?.status === st
+    const pageFilterOk = !filter || filter === 'todos' || linkedOk
+    return nameOk && statusOk && pageFilterOk
+  })
+
+  return { finData, pessoasData, pgtos: pgtos || [] }
+}
+
+function applyFinanceiroFilters() {
+  const { finData, pessoasData, pgtos } = getFinanceiroFilteredData()
+  renderFinanceiroDadosGerais(finData)
+  renderGradePagamentos(pessoasData, finData, pgtos, _finAllData.filter)
+}
+
+function clearFinanceiroFilters() {
+  const q = document.getElementById('finSearchNome')
+  const st = document.getElementById('finStatusFilter')
+  if (q) q.value = ''
+  if (st) st.value = ''
+  applyFinanceiroFilters()
+}
+
+function renderFinanceiroDadosGerais(finData) {
+  if (!finData?.length) {
+    document.getElementById('financeiroTable').innerHTML = `<div class="empty">Nenhum registro encontrado com esses filtros</div>`
+    return
+  }
+  document.getElementById('financeiroTable').innerHTML = `
+    <table>
+      <thead><tr><th>Nome</th><th>Status</th><th>Valor Mensal</th><th>Vencimento</th><th>Último Pagamento</th><th>Observação</th><th></th></tr></thead>
+      <tbody>
+        ${finData.map(f => `
+          <tr style="cursor:pointer" onclick="navigate('ficha',{id:'${f.pessoa_id||''}'})">
+            <td><strong>${f.nome}</strong></td>
+            <td>${statusBadge(f.status)}</td>
+            <td>${f.valor_mensal ? 'R$ '+Number(f.valor_mensal).toFixed(2) : '—'}</td>
+            <td class="${isOverdue(f.data_vencimento)?'timeline-prazo-vencido':''}">${fmtDate(f.data_vencimento)}</td>
+            <td>${fmtDate(f.data_ultimo_pagamento)}</td>
+            <td style="color:var(--gray-5);max-width:200px">${f.observacao||'—'}</td>
+            <td onclick="event.stopPropagation()">${canEditFinanceiro() ? `<button class="btn btn-ghost btn-sm" onclick="modalEditFinanceiro('${f.id}')">editar</button>` : ''}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>`
 }
 
 function setFinFilter(f) {
@@ -1510,6 +1581,11 @@ function renderGradePagamentos(pessoas, fins, pgtos, filter) {
     const nome = new Date(Number(y), Number(mo)-1, 1).toLocaleDateString('pt-BR', {month:'short',year:'2-digit'})
     return `<th style="text-align:center;min-width:80px;font-size:11px;padding:8px 4px">${nome}${m===curMes?' <span style="color:var(--pink)">●</span>':''}</th>`
   }).join('')
+
+  if (!pessoas.length) {
+    document.getElementById('finGrade').innerHTML = `<div class="empty">Nenhum associado encontrado com esses filtros</div>`
+    return
+  }
 
   const rows = pessoas.map(p => {
     const fin = finMap[p.id] || {}
@@ -1856,7 +1932,7 @@ async function modalNovoLog(pessoaId='', pessoaNome='') {
   }
   const today = new Date().toISOString().split('T')[0]
   const userName = getUserName()
-  const equipeOptions = ['Priscila','Gianmarco','Marcelo','Kátia','Gabriely'].map(r=>`<option ${r===userName?'selected':''}>${r}</option>`).join('')
+  const equipeOptions = ['Priscila','Gianmarco','Marcelo','Kátia'].map(r=>`<option ${r===userName?'selected':''}>${r}</option>`).join('')
   openModal('Registrar Atendimento', `
     <div class="form-grid">
       <div class="form-grid form-grid-2">
@@ -1998,7 +2074,6 @@ const USER_NAMES = {
   'marcelo@pimenta.com.br':        'Marcelo',
   'gian.sschiavo@gmail.com':       'Gianmarco',
   'liga@ligadosinovadores.com.br': 'Priscila',
-  'equipe@sorellamarketing.com.br':'Gabriely',
 }
 
 // Permissões — todos têm acesso completo
@@ -2288,7 +2363,7 @@ function renderTarefas() {
 
   // Top-level tasks
   let topLevel = _tarefas.filter(t => !t.parent_id)
-  if (q) topLevel = topLevel.filter(t => t.titulo?.toLowerCase().includes(q))
+  if (q) topLevel = topLevel.filter(t => (t.titulo||'').toLowerCase().includes(q) || (t.observacoes||'').toLowerCase().includes(q))
   if (catFilt) topLevel = topLevel.filter(t => t.categoria_id === catFilt)
   if (stFilt) topLevel = topLevel.filter(t => t.status === stFilt)
   if (respFilt) topLevel = topLevel.filter(t => t.responsavel === respFilt)
@@ -2336,43 +2411,121 @@ function renderTarefas() {
   container.innerHTML = html
 }
 
+function taskStatusBadge(status) {
+  const st = status || 'Não iniciado'
+  const MAP = {
+    'Não iniciado': { bg:'var(--gray-1)', color:'var(--gray-7)', border:'var(--gray-3)' },
+    'Em andamento': { bg:'var(--blue-lt)', color:'#2563EB', border:'#3B82F6' },
+    'Concluído': { bg:'var(--green-lt)', color:'var(--green)', border:'var(--green)' },
+    'Bloqueado': { bg:'var(--red-lt)', color:'var(--red)', border:'var(--red)' }
+  }
+  const c = MAP[st] || MAP['Não iniciado']
+  return `<span class="badge" style="background:${c.bg};color:${c.color};border:1px solid ${c.border};font-weight:700">${escHtml(st)}</span>`
+}
+
 function renderTarefaRow(task, nivel) {
   const children = _tarefas.filter(t => t.parent_id === task.id).sort((a,b)=>(a.ordem||0)-(b.ordem||0))
   const pad = nivel * 24
-  const isDone = task.concluido
+  const isDone = !!task.concluido
+  const obsPreview = task.observacoes ? `<div style="font-size:11px;color:var(--gray-5);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:520px">${escHtml(task.observacoes)}</div>` : ''
 
-  const STATUS_COLORS = { 'Não iniciado':'var(--gray-3)', 'Em andamento':'var(--blue)', 'Concluído':'var(--green)', 'Bloqueado':'var(--red)' }
-
-  let html = `
-    <div style="display:flex;align-items:center;gap:8px;padding:8px 16px 8px ${16+pad}px;border-bottom:1px solid var(--gray-1);min-height:38px;position:relative" class="tarefa-row" onmouseenter="this.style.background='var(--gray-1)'" onmouseleave="this.style.background=''">
-      <div onclick="toggleTarefaConcluida('${task.id}',${isDone})" style="width:16px;height:16px;border-radius:4px;border:1.5px solid ${isDone?'var(--green)':'var(--gray-3)'};cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:${isDone?'var(--green)':'transparent'};color:white;font-size:10px">${isDone?'✓':''}</div>
-      <input value="${(task.titulo||'').replace(/"/g,'&quot;')}" style="flex:1;border:none;outline:none;font-size:13px;background:transparent;${isDone?'text-decoration:line-through;color:var(--gray-5)':''}" onblur="updateTarefa('${task.id}','titulo',this.value)">
-      <select style="font-size:11px;border:none;outline:none;background:transparent;color:${STATUS_COLORS[task.status]||'var(--gray-5)'};cursor:pointer" onchange="updateTarefa('${task.id}','status',this.value)">
-        ${['Não iniciado','Em andamento','Concluído','Bloqueado'].map(s=>`<option ${s===task.status?'selected':''}>${s}</option>`).join('')}
-      </select>
-      ${nivel < 2 ? `<button class="btn btn-sm tarefa-sub-btn" style="font-size:11px;padding:4px 10px;flex-shrink:0" onclick="addSubtarefa('${task.id}')">+ sub</button>` : ''}
-      <select style="font-size:11px;border:none;outline:none;background:transparent;color:var(--gray-5);cursor:pointer" onchange="updateTarefa('${task.id}','prioridade',this.value)">
+  return `
+    <div class="tarefa-row" onclick="modalDetalheTarefa('${task.id}')" style="display:flex;align-items:center;gap:10px;padding:10px 16px 10px ${16+pad}px;border-bottom:1px solid var(--gray-1);min-height:44px;position:relative;cursor:pointer" onmouseenter="this.style.background='var(--gray-1)'" onmouseleave="this.style.background=''">
+      <div onclick="event.stopPropagation();toggleTarefaConcluida('${task.id}',${isDone})" style="width:18px;height:18px;border-radius:5px;border:1.5px solid ${isDone?'var(--green)':'var(--gray-3)'};cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:${isDone?'var(--green)':'transparent'};color:white;font-size:11px">${isDone?'✓':''}</div>
+      <div style="flex:1;min-width:180px">
+        <div style="font-size:13px;font-weight:600;color:${isDone?'var(--gray-5)':'var(--black)'};${isDone?'text-decoration:line-through':''}">${escHtml(task.titulo || 'Sem título')}</div>
+        ${obsPreview}
+      </div>
+      <div onclick="event.stopPropagation()" style="flex-shrink:0">
+        <select style="font-size:11px;border:1px solid var(--gray-3);border-radius:99px;padding:5px 8px;outline:none;background:var(--white);cursor:pointer;min-width:118px" onchange="updateTarefa('${task.id}','status',this.value)">
+          ${['Não iniciado','Em andamento','Concluído','Bloqueado'].map(s=>`<option ${s===task.status?'selected':''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex-shrink:0">${taskStatusBadge(task.status)}</div>
+      ${nivel < 2 ? `<button class="btn btn-primary btn-sm tarefa-sub-btn" style="font-size:11px;padding:5px 12px;flex-shrink:0;font-weight:700" onclick="event.stopPropagation();addSubtarefa('${task.id}')">+ sub</button>` : ''}
+      <select onclick="event.stopPropagation()" style="font-size:11px;border:none;outline:none;background:transparent;color:var(--gray-5);cursor:pointer" onchange="updateTarefa('${task.id}','prioridade',this.value)">
         ${['Alta','Média','Baixa'].map(p=>`<option ${p===task.prioridade?'selected':''}>${p}</option>`).join('')}
       </select>
-      <input type="date" value="${task.prazo||''}" style="font-size:11px;border:none;outline:none;background:transparent;color:var(--gray-5);cursor:pointer" onchange="updateTarefa('${task.id}','prazo',this.value)">
-      <select style="font-size:11px;border:none;outline:none;background:transparent;color:var(--gray-5);cursor:pointer" onchange="updateTarefa('${task.id}','responsavel',this.value)">
+      <input onclick="event.stopPropagation()" type="date" value="${task.prazo||''}" style="font-size:11px;border:none;outline:none;background:transparent;color:var(--gray-5);cursor:pointer" onchange="updateTarefa('${task.id}','prazo',this.value)">
+      <select onclick="event.stopPropagation()" style="font-size:11px;border:none;outline:none;background:transparent;color:var(--gray-5);cursor:pointer" onchange="updateTarefa('${task.id}','responsavel',this.value)">
         <option value="">Resp.</option>
-        ${['Kátia','Marcelo','Priscila','Gianmarco','Gabriely'].map(r=>`<option ${r===task.responsavel?'selected':''}>${r}</option>`).join('')}
+        ${['Kátia','Marcelo','Priscila','Gianmarco'].map(r=>`<option ${r===task.responsavel?'selected':''}>${r}</option>`).join('')}
       </select>
-      <div class="tarefa-actions" style="display:flex;gap:4px;opacity:1;transition:opacity .15s">
-        <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;color:var(--red)" onclick="deleteTarefa('${task.id}')">✕</button>
-      </div>
+      <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;color:var(--red);flex-shrink:0" onclick="event.stopPropagation();deleteTarefa('${task.id}')">✕</button>
     </div>
     ${children.map(c => renderTarefaRow(c, nivel+1)).join('')}
   `
-  // show actions on hover via inline style trick
-  html = html.replace(
-    'class="tarefa-actions"',
-    `class="tarefa-actions" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0'"`
-  )
-  // Actually let parent row handle it
-  return html
 }
+
+function modalDetalheTarefa(id) {
+  const task = _tarefas.find(t => t.id === id)
+  if (!task) { toast('Tarefa não encontrada', 'error'); return }
+  const children = _tarefas.filter(t => t.parent_id === id)
+  openModal('Detalhes da Tarefa',
+    `<div class="form-grid">
+      <div class="form-group">
+        <label>Título</label>
+        <input class="form-control" id="dt_titulo" value="${escAttr(task.titulo || '')}" placeholder="Nome da tarefa">
+      </div>
+      <div class="form-grid form-grid-2">
+        <div class="form-group"><label>Status</label>
+          <select class="form-control" id="dt_status">
+            ${['Não iniciado','Em andamento','Concluído','Bloqueado'].map(s=>`<option ${s===task.status?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group"><label>Responsável</label>
+          <select class="form-control" id="dt_resp">
+            <option value="">—</option>
+            ${['Kátia','Marcelo','Priscila','Gianmarco'].map(r=>`<option ${r===task.responsavel?'selected':''}>${r}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-grid form-grid-2">
+        <div class="form-group"><label>Prioridade</label>
+          <select class="form-control" id="dt_prio">
+            ${['Alta','Média','Baixa'].map(p=>`<option ${p===task.prioridade?'selected':''}>${p}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group"><label>Prazo</label><input class="form-control" id="dt_prazo" type="date" value="${task.prazo || ''}"></div>
+      </div>
+      <div class="form-group"><label>Informações / anotações da tarefa</label>
+        <textarea class="form-control" id="dt_obs" style="min-height:150px" placeholder="Registre aqui contexto, decisões, próximos passos, links ou observações da tarefa.">${escHtml(task.observacoes || '')}</textarea>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;font-size:12px;color:var(--gray-5)">
+        <div><strong>Criada por</strong><br>${escHtml(task.criado_por || '—')}</div>
+        <div><strong>Atualizada por</strong><br>${escHtml(task.atualizado_por || '—')}</div>
+        <div><strong>Subtarefas</strong><br>${children.length}</div>
+      </div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-primary" onclick="salvarDetalheTarefa('${id}')">Salvar</button>`
+  )
+}
+
+async function salvarDetalheTarefa(id) {
+  const titulo = document.getElementById('dt_titulo')?.value?.trim()
+  if (!titulo) { toast('Título obrigatório', 'error'); return }
+  const status = document.getElementById('dt_status')?.value || 'Não iniciado'
+  const payload = {
+    titulo,
+    status,
+    responsavel: document.getElementById('dt_resp')?.value || null,
+    prioridade: document.getElementById('dt_prio')?.value || 'Média',
+    prazo: document.getElementById('dt_prazo')?.value || null,
+    observacoes: document.getElementById('dt_obs')?.value || null,
+    concluido: status === 'Concluído',
+    atualizado_por: getUserName(),
+    updated_at: new Date().toISOString(),
+  }
+  const t = _tarefas.find(t => t.id === id)
+  if (t) Object.assign(t, payload)
+  const res = await dbWrite('detalhes da tarefa', sb.from('tarefas').update(payload).eq('id', id), { id, ...payload })
+  if (!res.ok) { await loadTarefas(); return }
+  closeModal()
+  renderTarefas()
+  toast('Tarefa atualizada')
+}
+
 
 async function addTarefa(titulo, catId, parentId, input) {
   if (!titulo?.trim()) return
@@ -2446,7 +2599,7 @@ function modalNovaTarefa() {
         <div class="form-group"><label>Responsável</label>
           <select class="form-control" id="nt_resp">
             <option value="">—</option>
-            ${['Kátia','Marcelo','Priscila','Gianmarco','Gabriely'].map(r=>`<option>${r}</option>`).join('')}
+            ${['Kátia','Marcelo','Priscila','Gianmarco'].map(r=>`<option>${r}</option>`).join('')}
           </select>
         </div>
       </div>
