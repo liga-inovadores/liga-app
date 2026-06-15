@@ -1367,13 +1367,345 @@ function buildPagamentosComFallback(pgtos, fins) {
   return out
 }
 
+async function salvarPagamentoSeguro(payload) {
+  const valorNormalizado = payload.valor === '' ? null : payload.valor
+  const dataPg = payload.data_pagamento || null
+  const pgPayload = { ...payload, valor: valorNormalizado, data_pagamento: dataPg, updated_at: new Date().toISOString() }
+  const saved = await dbWrite('pagamento', sb.from('pagamentos').upsert(pgPayload, { onConflict: 'pessoa_id,mes' }), pgPayload)
+  if (!saved.ok) return false
+
+  if (payload.status === 'pago' && dataPg) {
+    const finUpdate = await dbWrite('data do último pagamento', sb.from('financeiro').update({ data_ultimo_pagamento: dataPg, updated_at: new Date().toISOString() }).eq('pessoa_id', payload.pessoa_id), { pessoa_id: payload.pessoa_id, data_ultimo_pagamento: dataPg })
+    if (!finUpdate.ok) return false
+  }
+  return true
+}
+
+let _finTab = 'geral'
+let _finFilter = null
+let _finAllData = { fins: [], pessoas: [], pgtos: [], filter: null }
+
+function switchFinTab(tab) {
+  _finTab = tab
+  document.getElementById('finGrade').style.display = tab === 'grade' ? 'block' : 'none'
+  document.getElementById('finGeral').style.display = tab === 'geral' ? 'block' : 'none'
+  document.getElementById('tabGrade').className = tab === 'grade' ? 'btn btn-primary' : 'btn btn-ghost'
+  document.getElementById('tabGeral').className = tab === 'geral' ? 'btn btn-primary' : 'btn btn-ghost'
+}
+
+async function loadFinanceiro() {
+  const filter = _pageFilters['financeiro']
+  _finFilter = filter
+
+  // Load all data
+  const [{ data: fins }, { data: pgtos }, { data: pessoas }] = await Promise.all([
+    sb.from('financeiro').select('*').order('nome'),
+    sb.from('pagamentos').select('*'),
+    sb.from('pessoas').select('id,nome,perfil').in('perfil', ['Associado','Fundador Associado']).order('nome'),
+  ])
+
+  const hoje = new Date()
+  const em30 = new Date(); em30.setDate(hoje.getDate()+30)
+  const ativos = (fins||[]).filter(f => f.status === 'ATIVO')
+  const pendentes = (fins||[]).filter(f => f.status === 'PENDENTE')
+  const faturamento = ativos.reduce((s,f) => s+(f.valor_mensal||0), 0)
+
+  // ── KPI Cards financeiro ──
+  const curMes = hoje.toISOString().slice(0,7) // YYYY-MM
+  const pgtosCompat = buildPagamentosComFallback(pgtos || [], fins || [])
+  _finAllData = { fins: fins || [], pessoas: pessoas || [], pgtos: pgtosCompat || [], filter }
+  setupFinanceiroStatusOptions(fins || [])
+  const pgtosMes = (pgtosCompat||[]).filter(p => p.mes === curMes)
+  const pagosMes = pgtosMes.filter(p => p.status === 'pago')
+  const receitaConf = pagosMes.reduce((s,p) => s+(p.valor||0), 0)
+
+  const pagosIds = new Set(pagosMes.map(p => p.pessoa_id))
+  const inadimplentes = (pessoas||[]).filter(p => !pagosIds.has(p.id))
+  const pessoaNomeMap = {}; (pessoas||[]).forEach(p => pessoaNomeMap[p.id] = p.nome)
+  const finByPessoa = {}; (fins||[]).forEach(f => { if(f.pessoa_id) finByPessoa[f.pessoa_id] = f })
+  window._financeiroDetails = {
+    pago: pagosMes.map(p => ({...p, nome:pessoaNomeMap[p.pessoa_id] || finByPessoa[p.pessoa_id]?.nome || '—', data_vencimento: finByPessoa[p.pessoa_id]?.data_vencimento})),
+    pendente: inadimplentes.map(p => ({...p, ...(finByPessoa[p.id]||{}), nome:p.nome, status:'pendente'})),
+    receitaConfirmada: pagosMes.map(p => ({...p, nome:pessoaNomeMap[p.pessoa_id] || finByPessoa[p.pessoa_id]?.nome || '—', data_vencimento: finByPessoa[p.pessoa_id]?.data_vencimento})),
+    receitaEsperada: ativos
+  }
+
+  const kpiClickStyle = 'cursor:pointer;transition:transform .15s'
+  document.getElementById('finKpiGrid').innerHTML = `
+    <div class="kpi green" style="${kpiClickStyle}" onclick="showFinanceiroDetalhe('pago')" title="Ver quem pagou este mês">
+      <div class="kpi-label">Em dia este mês</div>
+      <div class="kpi-value">${pagosMes.length}</div>
+      <div class="kpi-sub">pagamentos confirmados</div>
+    </div>
+    <div class="kpi red" style="${kpiClickStyle}" onclick="showFinanceiroDetalhe('pendente')" title="Ver inadimplentes">
+      <div class="kpi-label">Inadimplentes</div>
+      <div class="kpi-value">${inadimplentes.length}</div>
+      <div class="kpi-sub">sem pagamento este mês</div>
+    </div>
+    <div class="kpi green" style="cursor:pointer" onclick="showFinanceiroDetalhe('receitaConfirmada')">
+      <div class="kpi-label">Receita Confirmada</div>
+      <div class="kpi-value">R$${(receitaConf/1000).toFixed(1)}k</div>
+      <div class="kpi-sub">este mês — confirmado</div>
+    </div>
+    <div class="kpi green" style="cursor:pointer" onclick="showFinanceiroDetalhe('receitaEsperada')">
+      <div class="kpi-label">Receita Esperada</div>
+      <div class="kpi-value">R$${(faturamento/1000).toFixed(1)}k</div>
+      <div class="kpi-sub">total recorrente</div>
+    </div>
+  `
+  document.querySelectorAll('.kpi').forEach(k => {
+    k.addEventListener('mouseenter', () => { if(k.style.cursor==='pointer') k.style.transform='translateY(-2px)' })
+    k.addEventListener('mouseleave', () => k.style.transform='')
+  })
+
+  // ── Dados gerais + Grade de pagamentos com filtros ──
+  applyFinanceiroFilters()
+
+  // Dados gerais aparecem primeiro por padrão
+  switchFinTab('geral')
+  _pageFilters['financeiro'] = null
+}
+
+
+function setupFinanceiroStatusOptions(fins) {
+  const sel = document.getElementById('finStatusFilter')
+  if (!sel) return
+  const current = sel.value
+  const statuses = [...new Set((fins || []).map(f => f.status).filter(Boolean))].sort()
+  sel.innerHTML = '<option value="">Todos os status</option>' + statuses.map(st => `<option value="${st}">${st}</option>`).join('')
+  sel.value = statuses.includes(current) ? current : ''
+}
+
+function getFinanceiroFilteredData() {
+  const q = (document.getElementById('finSearchNome')?.value || '').trim().toLowerCase()
+  const st = document.getElementById('finStatusFilter')?.value || ''
+  const { fins, pessoas, pgtos, filter } = _finAllData
+  const hoje = new Date()
+  const em30 = new Date(); em30.setDate(hoje.getDate()+30)
+
+  let finData = [...(fins || [])]
+  if (filter === 'ATIVO') finData = finData.filter(f => f.status === 'ATIVO')
+  if (filter === 'PENDENTE') finData = finData.filter(f => f.status === 'PENDENTE')
+  if (filter === 'vencendo') finData = finData.filter(f => {
+    if (!f.data_vencimento) return false
+    const d = new Date(f.data_vencimento)
+    return d >= hoje && d <= em30
+  })
+  if (q) finData = finData.filter(f => (f.nome || '').toLowerCase().includes(q))
+  if (st) finData = finData.filter(f => f.status === st)
+
+  const allowedIds = new Set(finData.map(f => f.pessoa_id).filter(Boolean))
+  const allowedNames = new Set(finData.map(f => f.nome).filter(Boolean))
+  let pessoasData = (pessoas || []).filter(p => {
+    const nameOk = !q || (p.nome || '').toLowerCase().includes(q)
+    const linkedOk = allowedIds.has(p.id) || allowedNames.has(p.nome)
+    const fin = (fins || []).find(f => f.pessoa_id === p.id || f.nome === p.nome)
+    const statusOk = !st || fin?.status === st
+    const pageFilterOk = !filter || filter === 'todos' || linkedOk
+    return nameOk && statusOk && pageFilterOk
+  })
+
+  return { finData, pessoasData, pgtos: pgtos || [] }
+}
+
+function applyFinanceiroFilters() {
+  const { finData, pessoasData, pgtos } = getFinanceiroFilteredData()
+  renderFinanceiroDadosGerais(finData)
+  renderGradePagamentos(pessoasData, finData, pgtos, _finAllData.filter)
+}
+
+function clearFinanceiroFilters() {
+  const q = document.getElementById('finSearchNome')
+  const st = document.getElementById('finStatusFilter')
+  if (q) q.value = ''
+  if (st) st.value = ''
+  applyFinanceiroFilters()
+}
+
+function renderFinanceiroDadosGerais(finData) {
+  if (!finData?.length) {
+    document.getElementById('financeiroTable').innerHTML = `<div class="empty">Nenhum registro encontrado com esses filtros</div>`
+    return
+  }
+  document.getElementById('financeiroTable').innerHTML = `
+    <table>
+      <thead><tr><th>Nome</th><th>Status</th><th>Valor Mensal</th><th>Vencimento</th><th>Último Pagamento</th><th>Observação</th><th></th></tr></thead>
+      <tbody>
+        ${finData.map(f => `
+          <tr style="cursor:pointer" onclick="navigate('ficha',{id:'${f.pessoa_id||''}'})">
+            <td><strong>${f.nome}</strong></td>
+            <td>${statusBadge(f.status)}</td>
+            <td>${f.valor_mensal ? 'R$ '+Number(f.valor_mensal).toFixed(2) : '—'}</td>
+            <td class="${isOverdue(f.data_vencimento)?'timeline-prazo-vencido':''}">${fmtDate(f.data_vencimento)}</td>
+            <td>${fmtDate(f.data_ultimo_pagamento)}</td>
+            <td style="color:var(--gray-5);max-width:200px">${f.observacao||'—'}</td>
+            <td onclick="event.stopPropagation()">${canEditFinanceiro() ? `<button class="btn btn-ghost btn-sm" onclick="modalEditFinanceiro('${f.id}')">editar</button>` : ''}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>`
+}
+
+function setFinFilter(f) {
+  _finFilter = f
+  renderGradePagamentosFilter(f)
+}
+
+function renderGradePagamentosFilter(filter) {
+  // Just re-highlight the grid based on filter
+  document.querySelectorAll('.grade-row').forEach(row => {
+    const isPago = row.dataset.hasPago === 'true'
+    const isInad = row.dataset.hasPago === 'false'
+    if (filter === 'pago') row.style.display = isPago ? '' : 'none'
+    else if (filter === 'pendente') row.style.display = isInad ? '' : 'none'
+    else row.style.display = ''
+  })
+}
+
+function getMonths(n) {
+  // Grade fixa do ano atual: janeiro a dezembro.
+  // Não depende de app_config nem de botão para adicionar mês.
+  const months = []
+  const year = new Date().getFullYear()
+  for (let month = 0; month < 12; month++) {
+    const dt = new Date(year, month, 1)
+    months.push(dt.toISOString().slice(0,7))
+  }
+  return months
+}
+
+function renderGradePagamentos(pessoas, fins, pgtos, filter) {
+  const months = getMonths(6)
+  const finMap = {}
+  fins.forEach(f => { if(f.pessoa_id) finMap[f.pessoa_id] = f })
+  const pgtoMap = {}
+  pgtos.forEach(p => {
+    if (!pgtoMap[p.pessoa_id]) pgtoMap[p.pessoa_id] = {}
+    pgtoMap[p.pessoa_id][p.mes] = p
+  })
+
+  const curMes = new Date().toISOString().slice(0,7)
+
+  const monthLabels = months.map(m => {
+    const [y,mo] = m.split('-')
+    const nome = new Date(Number(y), Number(mo)-1, 1).toLocaleDateString('pt-BR', {month:'short',year:'2-digit'})
+    return `<th style="text-align:center;min-width:80px;font-size:11px;padding:8px 4px">${nome}${m===curMes?' <span style="color:var(--pink)">●</span>':''}</th>`
+  }).join('')
+
+  if (!pessoas.length) {
+    document.getElementById('finGrade').innerHTML = `<div class="empty">Nenhum associado encontrado com esses filtros</div>`
+    return
+  }
+
+  const rows = pessoas.map(p => {
+    const fin = finMap[p.id] || {}
+    const hasPagoMes = pgtoMap[p.id]?.[curMes]?.status === 'pago'
+
+    const cells = months.map(mes => {
+      const pg = pgtoMap[p.id]?.[mes]
+      const isPago = pg?.status === 'pago'
+      const isIsento = pg?.status === 'isento'
+      const isCur = mes === curMes
+
+      let cellHtml, cellStyle
+      if (isPago) {
+        cellHtml = `<span style="color:var(--green);font-size:16px;cursor:pointer" onclick="togglePagamento('${p.id}','${mes}','${pg.id}','pago')" title="Pago — clique para desfazer">✓</span>`
+        cellStyle = 'background:var(--green-lt)'
+      } else if (isIsento) {
+        cellHtml = `<span style="color:var(--gray-5);font-size:12px;cursor:pointer" onclick="togglePagamento('${p.id}','${mes}','${pg.id}','isento')" title="Isento — clique para desfazer">—</span>`
+        cellStyle = 'background:var(--gray-1)'
+      } else {
+        cellHtml = `<span style="color:var(--gray-3);font-size:18px;cursor:pointer" onclick="togglePagamento('${p.id}','${mes}',null,null)" title="Marcar como pago">○</span>`
+        cellStyle = isCur ? 'background:var(--yell-lt)' : ''
+      }
+
+      return `<td style="text-align:center;padding:4px;${cellStyle}">${cellHtml}</td>`
+    }).join('')
+
+    return `<tr class="grade-row" data-has-pago="${hasPagoMes}" style="border-bottom:1px solid var(--gray-1)">
+      <td style="padding:8px 12px;min-width:180px">
+        <strong style="cursor:pointer;font-size:13px" onclick="navigate('ficha',{id:'${p.id}'})">${p.nome}</strong>
+        <div style="font-size:11px;color:var(--gray-5)">${fin.valor_mensal ? 'R$ '+Number(fin.valor_mensal).toFixed(2)+'/mês' : '—'}</div>
+      </td>
+      ${cells}
+      <td style="padding:4px 8px">
+        <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="modalEditarPagamentoMes('${p.id}','${p.nome}','${curMes}')">⋯</button>
+      </td>
+    </tr>`
+  }).join('')
+
+  document.getElementById('finGrade').innerHTML = `
+    <div style="padding:12px 16px 8px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:13px;font-weight:600">Grade de Pagamentos</div>
+        <div style="font-size:11px;color:var(--gray-5)">Janeiro a dezembro do ano atual · clique em ○ para marcar como pago · ✓ para desfazer</div>
+      </div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead style="background:var(--gray-1)">
+        <tr>
+          <th style="text-align:left;padding:8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-5)">Associado</th>
+          ${monthLabels}
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `
+}
+
+async function togglePagamento(pessoaId, mes, pgtoId, currentStatus) {
+  // Não salva pagamento direto no clique.
+  // Sempre abre a janela para confirmar status, data real, valor e observação.
+  const nomeEl = document.querySelector(`strong[onclick="navigate('ficha',{id:'${pessoaId}'})"]`)
+  const nome = nomeEl ? nomeEl.textContent.trim() : 'Associado'
+  await modalEditarPagamentoMes(pessoaId, nome, mes)
+}
+
+async function modalEditarPagamentoMes(pessoaId, nome, mes) {
+  const [{ data: pgAtual }, { data: finAtual }] = await Promise.all([
+    sb.from('pagamentos').select('*').eq('pessoa_id', pessoaId).eq('mes', mes).maybeSingle(),
+    sb.from('financeiro').select('valor_mensal,data_ultimo_pagamento').eq('pessoa_id', pessoaId).maybeSingle()
+  ])
+
+  const statusAtual = pgAtual?.status || 'pago'
+  const valorAtual = pgAtual?.valor ?? finAtual?.valor_mensal ?? ''
+  const dataAtual = pgAtual?.data_pagamento || ''
+  const obsAtual = (pgAtual?.observacao || '').replace(/"/g, '&quot;')
+
+  openModal(`Pagamento — ${nome} (${mes})`,
+    `<div class="form-grid">
+      <div class="form-group"><label>Status</label>
+        <select class="form-control" id="pg_status">
+          <option value="pago" ${statusAtual==='pago'?'selected':''}>Pago</option>
+          <option value="pendente" ${statusAtual==='pendente'?'selected':''}>Pendente</option>
+          <option value="isento" ${statusAtual==='isento'?'selected':''}>Isento</option>
+        </select>
+      </div>
+      <div class="form-grid form-grid-2">
+        <div class="form-group"><label>Valor (R$)</label><input class="form-control" id="pg_valor" type="number" step="0.01" value="${valorAtual ?? ''}"></div>
+        <div class="form-group"><label>Data em que aconteceu</label><input class="form-control" id="pg_data" type="date" value="${dataAtual}"></div>
+      </div>
+      <div class="form-group"><label>Observação</label><input class="form-control" id="pg_obs" value="${obsAtual}"></div>
+      <div style="font-size:12px;color:var(--gray-5);line-height:1.5">
+        Para marcar como pago, informe a data real do pagamento. O sistema só grava depois de clicar em Salvar.
+      </div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     ${pgAtual ? `<button class="btn btn-ghost" style="color:var(--red)" onclick="removerPagamento('${pessoaId}','${mes}')">Remover marcação</button>` : ''}
+     <button class="btn btn-primary" onclick="salvarPagamento('${pessoaId}','${mes}')">Salvar</button>`
+  )
+}
+
 async function salvarPagamento(pessoaId, mes) {
   const status = document.getElementById('pg_status').value
   const dataPagamento = document.getElementById('pg_data').value || null
+
   if (status === 'pago' && !dataPagamento) {
     toast('Informe a data em que o pagamento aconteceu.', 'error')
     return
   }
+
   const payload = {
     pessoa_id: pessoaId,
     mes,
@@ -1382,12 +1714,19 @@ async function salvarPagamento(pessoaId, mes) {
     data_pagamento: dataPagamento,
     observacao: document.getElementById('pg_obs').value || null,
   }
+
   const ok = await salvarPagamentoSeguro(payload)
   if (!ok) return
-  toast('Pagamento salvo no banco ✓')
+  toast('Pagamento salvo')
   closeModal(); loadFinanceiro()
 }
 
+async function removerPagamento(pessoaId, mes) {
+  const res = await dbWrite('remoção de pagamento', sb.from('pagamentos').delete().eq('pessoa_id', pessoaId).eq('mes', mes), { pessoa_id: pessoaId, mes })
+  if (!res.ok) return
+  toast('Marcação removida')
+  closeModal(); loadFinanceiro()
+}
 
 // ══════════════════════════════════════════════
 // LOG
